@@ -108,6 +108,17 @@ body.sell-theme .card-name{color:var(--oxblood-deep)}
 .vault-code{width:100%;font-family:monospace;font-size:11px;padding:8px;background:var(--paper-deep);border:1px solid rgba(31,74,56,.4);color:var(--ink);word-break:break-all;margin-bottom:10px;resize:vertical}
 .vault-divider{border-top:1px solid rgba(166,124,46,.5);margin:18px 0}
 .vault-msg{font-style:italic;font-size:14.5px;margin-top:10px;color:var(--rail-green)}
+.price-form{display:flex;align-items:flex-end;justify-content:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.pf-field{display:flex;flex-direction:column;gap:4px;text-align:left}
+.pf-field label{font-family:'Marcellus',Georgia,serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass)}
+.pf-field input{width:104px;font-family:'Sorts Mill Goudy',Georgia,serif;font-size:16px;padding:8px;background:var(--paper-deep);border:1px solid rgba(31,74,56,.4);color:var(--ink)}
+.pf-field input:focus{outline:2px solid var(--brass);outline-offset:1px}
+.treasury .t-rows{padding:4px 0}
+.t-row{display:flex;justify-content:space-between;align-items:baseline;padding:9px 14px;border-top:1px solid rgba(31,74,56,.18);font-size:16px}
+.t-row:first-child{border-top:none}
+.t-amt{font-family:'Marcellus',Georgia,serif;color:var(--rail-green-deep);font-size:17px}
+.sale-amt{color:var(--oxblood)}
+.val-chip{font-family:'Marcellus',Georgia,serif;font-size:13px;color:var(--brass);background:transparent;border:1px solid rgba(166,124,46,.45);padding:3px 7px;cursor:pointer;flex-shrink:0}
 .colophon{text-align:center;font-style:italic;font-size:13.5px;color:rgba(35,48,31,.55);margin-top:30px}
 .link-btn{background:none;border:none;font:inherit;color:rgba(35,48,31,.55);text-decoration:underline;cursor:pointer}
 @media (prefers-reduced-motion:reduce){.card,.btn{transition:none}}
@@ -128,6 +139,7 @@ const KEY = "collection-gauntlet:v1";
 let S = {
   screen: "home", mode: "keep",
   keepers: [], sells: [], excluded: [],
+  values: {},
   tourney: null, lastResult: null
 };
 let history = [];      // undo snapshots (not persisted)
@@ -150,6 +162,7 @@ function load() {
     const s = JSON.parse(raw);
     if (s && Array.isArray(s.keepers)) {
       S = Object.assign(S, s);
+      if (!S.values || typeof S.values !== "object") S.values = {};
       if (S.screen === "play" && !S.tourney) S.screen = "home";
       if (S.screen === "loading") S.screen = "home";
     }
@@ -172,6 +185,18 @@ const bggUrl = (n) => "https://boardgamegeek.com/market/browse?objecttype=thing&
 const ebayUrl = (n) => "https://www.ebay.com/sch/i.html?_nkw=" + encodeURIComponent(n + " board game") + "&LH_Sold=1&LH_Complete=1";
 const encodeSave = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
 const decodeSave = (s) => JSON.parse(decodeURIComponent(escape(atob(s.trim()))));
+const fmt = (n) => "$" + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+function treasury() {
+  let paid = 0, coll = 0, sale = 0, nPaid = 0, nVal = 0;
+  for (const [name, v] of Object.entries(S.values)) {
+    if (typeof v.paid === "number") { paid += v.paid; nPaid++; }
+    if (typeof v.val === "number") {
+      nVal++;
+      if (S.sells.includes(name)) sale += v.val; else coll += v.val;
+    }
+  }
+  return { paid, coll, sale, nPaid, nVal };
+}
 function hueFor(n) { let h = 0; for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0; return h % 360; }
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); } catch (e) {
@@ -201,6 +226,8 @@ const startTournament = (names) => drawPair({ round: shuffle(names), nextRound: 
 
 // ---------- actions ----------
 function beginTournament(m) {
+  if (S.tourney && !confirm("A paused gauntlet is waiting. Abandon it and start a new one?")) return;
+  S.tourney = null;
   const p = pool();
   if (p.length === 0) { S.screen = "done"; commit(); return; }
   if (p.length === 1) { finish(p[0], m); return; }
@@ -231,6 +258,29 @@ function pick(name) {
     else { S.tourney = next; commit(); }
   }, 260);
 }
+function resumeGauntlet() { if (S.tourney) { S.screen = "play"; commit(); } }
+function saveValues(name) {
+  const paid = parseFloat(document.getElementById("v-paid").value);
+  const val = parseFloat(document.getElementById("v-val").value);
+  const entry = {};
+  if (!isNaN(paid)) entry.paid = paid;
+  if (!isNaN(val)) entry.val = val;
+  if (Object.keys(entry).length) S.values[name] = Object.assign(S.values[name] || {}, entry);
+  commit();
+}
+function editValues(name) {
+  const cur = S.values[name] || {};
+  const p = prompt("Price paid for " + name + " ($):", cur.paid != null ? cur.paid : "");
+  if (p === null) return;
+  const v = prompt("Sell value of " + name + " ($):", cur.val != null ? cur.val : "");
+  if (v === null) return;
+  const entry = {};
+  const pn = parseFloat(p), vn = parseFloat(v);
+  if (!isNaN(pn)) entry.paid = pn;
+  if (!isNaN(vn)) entry.val = vn;
+  S.values[name] = entry;
+  commit();
+}
 function undo() {
   const prev = history.pop();
   if (!prev) return;
@@ -246,7 +296,7 @@ function toggleExcluded(name) {
 }
 function resetAll() {
   if (!confirm("Reset everything? Champions, sale ledger, and set-aside games will be cleared.")) return;
-  S = { screen: "home", mode: "keep", keepers: [], sells: [], excluded: [], tourney: null, lastResult: null };
+  S = { screen: "home", mode: "keep", keepers: [], sells: [], excluded: [], values: {}, tourney: null, lastResult: null };
   history = [];
   try { localStorage.removeItem(KEY); } catch (e) {}
   commit();
@@ -258,6 +308,16 @@ function restoreFromCode() {
     if (!o || !Array.isArray(o.k) || !Array.isArray(o.s) || !Array.isArray(o.x)) throw new Error("bad");
     const valid = (n) => ALL.includes(n);
     S.keepers = o.k.filter(valid); S.sells = o.s.filter(valid); S.excluded = o.x.filter(valid);
+    S.values = {};
+    if (o.v && typeof o.v === "object") {
+      for (const [n, e] of Object.entries(o.v)) {
+        if (!valid(n) || !e) continue;
+        const entry = {};
+        if (typeof e.paid === "number") entry.paid = e.paid;
+        if (typeof e.val === "number") entry.val = e.val;
+        if (Object.keys(entry).length) S.values[n] = entry;
+      }
+    }
     S.tourney = null; S.lastResult = null; history = [];
     restoreMsg = "Restored: " + o.k.length + " champions, " + o.s.length + " for sale, " + o.x.length + " set aside.";
   } catch (e) {
@@ -275,24 +335,38 @@ function boxCover(name, cls) {
   const initials = esc(name.replace(/\(.*?\)/g, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join(""));
   return '<span class="box-frame ' + (cls || "") + '" style="background:linear-gradient(160deg,hsl(' + hue + ',38%,32%),hsl(' + ((hue + 40) % 360) + ',34%,20%))"><span class="box-initials">' + initials + "</span></span>";
 }
+function valChip(name) {
+  const v = S.values[name];
+  const label = v && typeof v.val === "number" ? fmt(v.val) : "$?";
+  return '<button class="val-chip" data-act="edit-val" data-name="' + esc(name) + '">' + label + "</button>";
+}
 function thumb(name) {
   const src = IMG[name];
   if (src) return '<img class="ledger-thumb" src="' + src + '" alt="">';
   return '<span class="ledger-thumb thumb-fallback" style="background:hsl(' + hueFor(name) + ',38%,32%)"></span>';
+}
+function treasuryPanel() {
+  const t = treasury();
+  if (!t.nPaid && !t.nVal) return "";
+  return '<section class="ledger treasury"><div class="ledger-head"><span>The Treasury</span></div><div class="t-rows">' +
+    '<div class="t-row"><span>Purchase price (' + t.nPaid + ' games priced)</span><span class="t-amt">' + fmt(t.paid) + "</span></div>" +
+    '<div class="t-row"><span>Collection value</span><span class="t-amt">' + fmt(t.coll) + "</span></div>" +
+    '<div class="t-row"><span>Sale ledger value</span><span class="t-amt sale-amt">' + fmt(t.sale) + "</span></div>" +
+    "</div></section>";
 }
 function ledgers() {
   let h = "";
   if (S.keepers.length) {
     h += '<section class="ledger"><div class="ledger-head"><span>Hall of Champions</span><button class="copy" data-act="copy-keep">Copy list</button></div><ol>';
     S.keepers.forEach((c, i) => {
-      h += '<li><span class="rank">' + (i + 1) + "</span>" + thumb(c) + '<span class="ledger-name">' + esc(c) + "</span></li>";
+      h += '<li><span class="rank">' + (i + 1) + "</span>" + thumb(c) + '<span class="ledger-name">' + esc(c) + "</span>" + valChip(c) + "</li>";
     });
     h += "</ol></section>";
   }
   if (S.sells.length) {
     h += '<section class="ledger sell-ledger"><div class="ledger-head sell-head"><span>Sale Ledger</span><button class="copy" data-act="copy-sell">Copy list</button></div><ol>';
     for (const c of S.sells) {
-      h += '<li><span class="rank">\u2022</span>' + thumb(c) + '<span class="ledger-name">' + esc(c) + '</span><span class="mini-links"><a href="' + bggUrl(c) + '" target="_blank" rel="noreferrer">BGG</a><a href="' + ebayUrl(c) + '" target="_blank" rel="noreferrer">eBay</a></span></li>';
+      h += '<li><span class="rank">\u2022</span>' + thumb(c) + '<span class="ledger-name">' + esc(c) + "</span>" + valChip(c) + '<span class="mini-links"><a href="' + bggUrl(c) + '" target="_blank" rel="noreferrer">BGG</a><a href="' + ebayUrl(c) + '" target="_blank" rel="noreferrer">eBay</a></span></li>';
     }
     h += "</ol></section>";
   }
@@ -316,10 +390,11 @@ function render() {
     body = '<div class="panel center"><p class="lede">' + p.length + " games await judgment" +
       (S.excluded.length ? " (" + S.excluded.length + " set aside)" : "") +
       ". Keep gauntlets crown the game you'd save first; sale gauntlets condemn the one you'd part with first.</p>" +
-      '<button class="btn primary" data-act="begin-keep">Run a keep gauntlet</button><div class="gap"></div>' +
+      (S.tourney ? '<button class="btn primary" data-act="resume">Resume ' + (S.mode === "sell" ? "sale" : "keep") + " gauntlet \u00b7 Round " + S.tourney.roundNum + "</button><div class=\"gap\"></div>" : "") +
+      '<button class="btn ' + (S.tourney ? "ghost" : "primary") + '" data-act="begin-keep">Run a keep gauntlet</button><div class="gap"></div>' +
       '<button class="btn sell-btn" data-act="begin-sell">Run a sale gauntlet</button><div class="gap"></div>' +
       '<button class="btn ghost" data-act="trim">Review the pool \u00b7 remove games</button><div class="gap"></div>' +
-      '<button class="btn ghost" data-act="vault">Backup &amp; restore progress</button></div>' + ledgers();
+      '<button class="btn ghost" data-act="vault">Backup &amp; restore progress</button></div>' + treasuryPanel() + ledgers();
   }
 
   else if (S.screen === "trim") {
@@ -356,6 +431,10 @@ function render() {
       body += '<div class="price-links"><a href="' + bggUrl(r.name) + '" target="_blank" rel="noreferrer">BGG marketplace listings \u2197</a>' +
         '<a href="' + ebayUrl(r.name) + '" target="_blank" rel="noreferrer">eBay sold prices \u2197</a></div>';
     }
+    const cv = S.values[r.name] || {};
+    body += '<div class="price-form"><div class="pf-field"><label>Price paid</label><input id="v-paid" type="number" inputmode="decimal" step="0.01" placeholder="$" value="' + (cv.paid != null ? cv.paid : "") + '"></div>' +
+      '<div class="pf-field"><label>Sell value</label><input id="v-val" type="number" inputmode="decimal" step="0.01" placeholder="$" value="' + (cv.val != null ? cv.val : "") + '"></div>' +
+      '<button class="btn ghost" data-act="save-values" data-name="' + esc(r.name) + '">' + (cv.paid != null || cv.val != null ? "Update" : "Save") + "</button></div>";
     body += '<p class="lede">' + (p.length ? p.length + " games remain in the pool." : "The shelf is fully judged.") + "</p>";
     if (p.length) {
       body += '<button class="btn primary" data-act="begin-' + nextMode + '">' + (nextMode === "sell" ? "Next: sale gauntlet" : "Next: keep gauntlet") + "</button><div class=\"gap\"></div>" +
@@ -367,7 +446,7 @@ function render() {
   }
 
   else if (S.screen === "vault") {
-    const code = encodeSave({ k: S.keepers, s: S.sells, x: S.excluded });
+    const code = encodeSave({ k: S.keepers, s: S.sells, x: S.excluded, v: S.values });
     body = '<div class="panel"><p class="lede">Your save code captures the Hall of Champions, Sale Ledger, and set-aside games. Copy it somewhere safe (Notes works well) \u2014 paste it back here anytime to restore, even on another device.</p>' +
       '<div class="vault-label">Current save code</div><textarea class="vault-code" readonly rows="3">' + code + "</textarea>" +
       '<button class="btn primary" data-act="copy-code">Copy save code</button>' +
@@ -422,11 +501,14 @@ document.addEventListener("click", (e) => {
   else if (act === "done") { S.screen = "done"; commit(); }
   else if (act === "pick") pick(name);
   else if (act === "undo") undo();
+  else if (act === "resume") resumeGauntlet();
+  else if (act === "save-values") saveValues(name);
+  else if (act === "edit-val") editValues(name);
   else if (act === "toggle") toggleExcluded(name);
   else if (act === "reset") resetAll();
   else if (act === "restore") restoreFromCode();
   else if (act === "copy-code") {
-    copyText(encodeSave({ k: S.keepers, s: S.sells, x: S.excluded }));
+    copyText(encodeSave({ k: S.keepers, s: S.sells, x: S.excluded, v: S.values }));
     el.textContent = "Copied"; setTimeout(() => { el.textContent = "Copy save code"; }, 1600);
   }
   else if (act === "copy-keep") {
