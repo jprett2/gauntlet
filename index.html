@@ -142,7 +142,8 @@ let S = {
   keepers: [], sells: [], excluded: [],
   values: {},
   tourney: null, lastResult: null,
-  ranking: null, rankings: [], rankExcluded: []
+  ranking: null, rankings: [], rankExcluded: [],
+  batch: null
 };
 let history = [];      // undo snapshots (not persisted)
 let picked = null;     // animation lock
@@ -169,6 +170,7 @@ function load() {
       if (!Array.isArray(S.rankings)) S.rankings = [];
       if (!Array.isArray(S.rankExcluded)) S.rankExcluded = [];
       if (S.screen === "rank-play" && !S.ranking) S.screen = "home";
+      if (S.screen === "batch-play" && !S.batch) S.screen = "home";
       if (S.screen === "play" && !S.tourney) S.screen = "home";
       if (S.screen === "loading") S.screen = "home";
     }
@@ -264,6 +266,98 @@ function pick(name) {
     else { S.tourney = next; commit(); }
   }, 260);
 }
+function estBatch(n, x, y) {
+  if (n < 2) return 0;
+  let e = 0;
+  const lg = (m) => Math.ceil(Math.log2(Math.max(m, 2)));
+  if (x > 0) e += (n - 1) + (x - 1) * lg(n);
+  if (y > 0) {
+    const z = x > 0 ? Math.ceil(n / 2) : n;
+    e += (z - 1) + (y - 1) * lg(z);
+  }
+  return e;
+}
+function beginBatch() {
+  if (S.batch && !confirm("A paused gauntlet is waiting. Abandon it and start fresh?")) return;
+  const p = pool();
+  let x = parseInt(document.getElementById("batch-x").value, 10);
+  let y = parseInt(document.getElementById("batch-y").value, 10);
+  if (isNaN(x) || x < 0) x = 5;
+  if (isNaN(y) || y < 0) y = 5;
+  x = Math.min(x, p.length);
+  y = Math.min(y, p.length - x);
+  if (x + y < 1) { alert("Pick at least one keep or sell seat."); return; }
+  if (p.length < 2) { alert("Not enough games left in the pool."); return; }
+  S.batchX = x; S.batchY = y;
+  S.batch = { stage: x > 0 ? "top" : "bottom", x, y, pool: p, topRanked: [], botRanked: [], lostTo: {}, wins: {}, picks: 0, bracket: null };
+  const B = S.batch;
+  B.bracket = drawPair({ round: shuffle(B.stage === "top" ? p : p.slice()), nextRound: [], roundNum: 1 });
+  advanceBatch();
+  commit();
+}
+function startBottomStage() {
+  const B = S.batch;
+  B.stage = "bottom";
+  if (B.y === 0) { finishBatch(); return; }
+  const cands = B.pool.filter((g) => !B.topRanked.includes(g) && !(B.wins[g] && B.wins[g].length));
+  B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+}
+function finishBatch() {
+  const B = S.batch;
+  S.keepers = S.keepers.concat(B.topRanked);
+  S.sells = S.sells.concat(B.botRanked);
+  S.lastBatch = { k: B.topRanked, s: B.botRanked, picks: B.picks };
+  S.batch = null;
+  S.screen = "batch-done";
+}
+function advanceBatch() {
+  const B = S.batch;
+  while (B && B.bracket && B.bracket.champion) {
+    const c = B.bracket.champion;
+    if (B.stage === "top") {
+      B.topRanked.push(c);
+      if (B.topRanked.length >= B.x || B.topRanked.length >= B.pool.length) {
+        if (B.topRanked.length >= B.pool.length) { finishBatch(); return; }
+        startBottomStage();
+        if (!S.batch) return;
+        continue;
+      }
+      const cands = B.pool.filter((g) => !B.topRanked.includes(g) && B.lostTo[g] === c);
+      B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+    } else {
+      B.botRanked.push(c);
+      if (B.botRanked.length >= B.y || B.topRanked.length + B.botRanked.length >= B.pool.length) { finishBatch(); return; }
+      const cands = B.pool.filter((g) =>
+        !B.topRanked.includes(g) && !B.botRanked.includes(g) &&
+        B.wins[g] && B.wins[g].length && B.wins[g].every((w) => B.botRanked.includes(w))
+      );
+      if (!cands.length) { finishBatch(); return; }
+      B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+    }
+  }
+  if (S.batch) S.screen = "batch-play";
+}
+function pickBatch(kept) {
+  const B = S.batch;
+  if (!B || !B.bracket || !B.bracket.pair || picked) return;
+  picked = kept;
+  document.querySelectorAll(".card").forEach((c) => {
+    c.classList.add(c.dataset.name === kept ? "chosen" : "fallen");
+  });
+  setTimeout(() => {
+    history.push(JSON.parse(JSON.stringify({ tourney: S.tourney, ranking: S.ranking, batch: S.batch, keepers: S.keepers, sells: S.sells, mode: S.mode, screen: S.screen })));
+    if (history.length > 20) history.shift();
+    const other = B.bracket.pair[0] === kept ? B.bracket.pair[1] : B.bracket.pair[0];
+    B.lostTo[other] = kept;
+    (B.wins[kept] = B.wins[kept] || []).push(other);
+    B.picks++;
+    const advancing = B.stage === "top" ? kept : other;
+    B.bracket = drawPair({ round: B.bracket.round, nextRound: B.bracket.nextRound.concat([advancing]), roundNum: B.bracket.roundNum });
+    picked = null;
+    advanceBatch();
+    commit();
+  }, 260);
+}
 const rankPool = () => ALL.filter((g) => !S.rankExcluded.includes(g));
 const estimatePicks = (n, x) => n < 2 ? 0 : (n - 1) + (Math.min(x, n) - 1) * Math.ceil(Math.log2(n));
 
@@ -354,6 +448,7 @@ function undo() {
   if (!prev) return;
   S.tourney = prev.tourney; S.keepers = prev.keepers; S.sells = prev.sells;
   if ("ranking" in prev) S.ranking = prev.ranking;
+  if ("batch" in prev) S.batch = prev.batch;
   S.mode = prev.mode; S.screen = prev.screen; S.lastResult = null;
   commit();
 }
@@ -366,7 +461,7 @@ function toggleExcluded(name) {
 }
 function resetAll() {
   if (!confirm("Reset everything? Champions, sale ledger, and set-aside games will be cleared.")) return;
-  S = { screen: "home", mode: "keep", keepers: [], sells: [], excluded: [], values: {}, tourney: null, lastResult: null, ranking: null, rankings: [], rankExcluded: [] };
+  S = { screen: "home", mode: "keep", keepers: [], sells: [], excluded: [], values: {}, tourney: null, lastResult: null, ranking: null, rankings: [], rankExcluded: [], batch: null };
   history = [];
   try { localStorage.removeItem(KEY); } catch (e) {}
   commit();
@@ -472,17 +567,75 @@ function render() {
     const p = pool();
     body = '<div class="panel center"><p class="lede">' + p.length + " games await judgment" +
       (S.excluded.length ? " (" + S.excluded.length + " set aside)" : "") +
-      ". Keep gauntlets crown the game you'd save first; sale gauntlets condemn the one you'd part with first.</p>" +
+      ". Each gauntlet run finds your top keeps and bottom sells \u2014 you always tap the game you\u0027d keep.</p>" +
+      (S.batch ? '<button class="btn primary" data-act="resume-batch">Resume gauntlet \u00b7 ' + (S.batch.stage === "bottom" ? "sale seat " + (S.batch.botRanked.length + 1) : "keep seat " + (S.batch.topRanked.length + 1)) + "</button><div class=\"gap\"></div>" : "") +
       (S.ranking ? '<button class="btn primary" data-act="resume-rank">Resume ranking \u00b7 ' + esc(S.ranking.title) + " \u00b7 seat " + (S.ranking.ranked.length + 1) + "</button><div class=\"gap\"></div>" : "") +
       (S.tourney ? '<button class="btn primary" data-act="resume">Resume ' + (S.mode === "sell" ? "sale" : "keep") + " gauntlet \u00b7 Round " + S.tourney.roundNum + "</button><div class=\"gap\"></div>" : "") +
-      '<button class="btn ' + (S.tourney ? "ghost" : "primary") + '" data-act="begin-keep">Run a keep gauntlet</button><div class="gap"></div>' +
-      '<button class="btn sell-btn" data-act="begin-sell">Run a sale gauntlet</button><div class="gap"></div>' +
+      '<button class="btn ' + (S.batch || S.tourney ? "ghost" : "primary") + '" data-act="batch-setup">Run a gauntlet \u00b7 top &amp; bottom</button><div class="gap"></div>' +
       '<button class="btn ghost" data-act="rank-setup">Rank my top X</button><div class="gap"></div>' +
       '<button class="btn ghost" data-act="trim">Review the pool \u00b7 remove games</button><div class="gap"></div>' +
       (S.rankings.length ? '<button class="btn ghost" data-act="rankings">Past rankings (' + S.rankings.length + ")</button><div class=\"gap\"></div>" : "") +
       '<button class="btn ghost" data-act="vault">Backup &amp; restore progress</button></div>' +
       (S.rankings.length ? rankingLedger(S.rankings[S.rankings.length - 1], S.rankings.length - 1, false) : "") +
       treasuryPanel() + ledgers();
+  }
+
+  else if (S.screen === "batch-setup") {
+    const p = pool();
+    body = '<div class="panel"><p class="lede">One run, both ends of the shelf: a keep bracket crowns your top X, then the games that never won a pick fight it out for the sale ledger. Every tap is the game you\u0027d keep. ' + p.length + " games in the pool.</p>" +
+      '<div class="price-form" style="justify-content:flex-start">' +
+      '<div class="pf-field"><label>Keep how many?</label><input id="batch-x" type="number" inputmode="numeric" min="0" max="' + p.length + '" value="' + (S.batchX != null ? S.batchX : 5) + '"></div>' +
+      '<div class="pf-field"><label>Sell how many?</label><input id="batch-y" type="number" inputmode="numeric" min="0" max="' + p.length + '" value="' + (S.batchY != null ? S.batchY : 5) + '"></div></div>' +
+      '<div class="trim-count" id="batch-est"></div>' +
+      '<button class="btn primary" data-act="begin-batch">Start the gauntlet</button>' +
+      '<div class="toolbar"><button class="btn ghost" data-act="home">Back</button></div></div>';
+  }
+
+  else if (S.screen === "batch-play" && S.batch && S.batch.bracket && S.batch.bracket.pair) {
+    const B = S.batch, b = B.bracket, bottom = B.stage === "bottom";
+    const left = b.round.length + b.nextRound.length + 2;
+    const seat = bottom ? B.botRanked.length + 1 : B.topRanked.length + 1;
+    const of = bottom ? B.y : B.x;
+    body = '<div class="scoreline"><span class="' + (bottom ? "sell-tag" : "keep-tag") + '">' + (bottom ? "Sale seats" : "Keep seats") +
+      '</span><span class="dot">\u00b7</span><span>Seat ' + seat + " of " + of +
+      '</span><span class="dot">\u00b7</span><span>' + left + " remain</span></div>" +
+      '<p class="prompt">Tap the one you\u0027d keep.</p><div class="matchup">';
+    b.pair.forEach((name, i) => {
+      if (i === 1) body += '<div class="vs"><span>versus</span></div>';
+      body += '<button class="card" data-act="pick-batch" data-name="' + esc(name) + '"><span class="card-eyebrow">Keep</span>' + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
+    });
+    body += '</div><div class="toolbar"><button class="btn ghost" data-act="undo"' + (history.length ? "" : " disabled") + '>Undo last pick</button>' +
+      '<button class="btn ghost" data-act="home">Pause</button></div>';
+    if (B.topRanked.length) {
+      body += '<section class="ledger"><div class="ledger-head"><span>Enshrined so far</span></div><ol>';
+      B.topRanked.forEach((g, j) => { body += '<li><span class="rank">' + (j + 1) + "</span>" + thumb(g) + '<span class="ledger-name">' + esc(g) + "</span></li>"; });
+      body += "</ol></section>";
+    }
+    if (B.botRanked.length) {
+      body += '<section class="ledger sell-ledger"><div class="ledger-head sell-head"><span>Condemned so far</span></div><ol>';
+      B.botRanked.forEach((g, j) => { body += '<li><span class="rank">' + (j + 1) + "</span>" + thumb(g) + '<span class="ledger-name">' + esc(g) + "</span></li>"; });
+      body += "</ol></section>";
+    }
+  }
+
+  else if (S.screen === "batch-done") {
+    const lb = S.lastBatch || { k: [], s: [], picks: 0 };
+    body = '<div class="panel center"><div class="laurel">\u2766</div><h2 class="champ-name">Gauntlet complete</h2>' +
+      '<p class="lede">' + lb.picks + " picks \u00b7 " + lb.k.length + " enshrined \u00b7 " + lb.s.length + " condemned. Tap the $ chips to record prices.</p></div>";
+    if (lb.k.length) {
+      body += '<section class="ledger"><div class="ledger-head"><span>Enshrined</span></div><ol>';
+      lb.k.forEach((g, j) => { body += '<li><span class="rank">' + (j + 1) + "</span>" + thumb(g) + '<span class="ledger-name">' + esc(g) + "</span>" + valChip(g) + "</li>"; });
+      body += "</ol></section>";
+    }
+    if (lb.s.length) {
+      body += '<section class="ledger sell-ledger"><div class="ledger-head sell-head"><span>Condemned</span></div><ol>';
+      lb.s.forEach((g) => {
+        body += '<li><span class="rank">\u2022</span>' + thumb(g) + '<span class="ledger-name">' + esc(g) + "</span>" + valChip(g) +
+          '<span class="mini-links"><a href="' + bggUrl(g) + '" target="_blank" rel="noreferrer">BGG</a><a href="' + ebayUrl(g) + '" target="_blank" rel="noreferrer">eBay</a></span></li>';
+      });
+      body += "</ol></section>";
+    }
+    body += '<div class="toolbar"><button class="btn primary" data-act="home">Done</button></div>';
   }
 
   else if (S.screen === "rank-setup") {
@@ -571,12 +724,7 @@ function render() {
       '<div class="pf-field"><label>Sell value</label><input id="v-val" type="number" inputmode="decimal" step="0.01" placeholder="$" value="' + (cv.val != null ? cv.val : "") + '"></div>' +
       '<button class="btn ghost" data-act="save-values" data-name="' + esc(r.name) + '">' + (cv.paid != null || cv.val != null ? "Update" : "Save") + "</button></div>";
     body += '<p class="lede">' + (p.length ? p.length + " games remain in the pool." : "The shelf is fully judged.") + "</p>";
-    if (p.length) {
-      body += '<button class="btn primary" data-act="begin-' + nextMode + '">' + (nextMode === "sell" ? "Next: sale gauntlet" : "Next: keep gauntlet") + "</button><div class=\"gap\"></div>" +
-        '<button class="btn ghost" data-act="begin-' + S.mode + '">Run another ' + (S.mode === "sell" ? "sale" : "keep") + " gauntlet instead</button>";
-    } else {
-      body += '<button class="btn primary" data-act="done">View the final ledgers</button>';
-    }
+    body += '<button class="btn primary" data-act="home">Done</button>';
     body += "</div>" + ledgers();
   }
 
@@ -601,6 +749,17 @@ function render() {
 
   app.innerHTML = head + body + colophon();
 
+  if (S.screen === "batch-setup") {
+    const xi = document.getElementById("batch-x"), yi = document.getElementById("batch-y"), est = document.getElementById("batch-est");
+    const upd = () => {
+      const n = pool().length;
+      let x = parseInt(xi.value, 10), y = parseInt(yi.value, 10);
+      if (isNaN(x) || x < 0) x = 0; if (isNaN(y) || y < 0) y = 0;
+      x = Math.min(x, n); y = Math.min(y, Math.max(0, n - x));
+      est.textContent = "\u2248 " + estBatch(n, x, y) + " picks for top " + x + " + bottom " + y;
+    };
+    xi.addEventListener("input", upd); yi.addEventListener("input", upd); upd();
+  }
   if (S.screen === "rank-setup") {
     const xi = document.getElementById("rank-x");
     const est = document.getElementById("rank-est");
@@ -649,6 +808,10 @@ document.addEventListener("click", (e) => {
   else if (act === "undo") undo();
   else if (act === "resume") resumeGauntlet();
   else if (act === "resume-rank") { S.screen = "rank-play"; commit(); }
+  else if (act === "begin-batch") beginBatch();
+  else if (act === "batch-setup") { S.screen = "batch-setup"; commit(); }
+  else if (act === "resume-batch") { S.screen = "batch-play"; commit(); }
+  else if (act === "pick-batch") pickBatch(name);
   else if (act === "rank-setup") { S.screen = "rank-setup"; commit(); }
   else if (act === "rank-trim") { trimTarget = "rank"; filter = ""; S.screen = "trim"; commit(); }
   else if (act === "rank-clear-ex") { S.rankExcluded = []; commit(); }
