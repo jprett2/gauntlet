@@ -1,4 +1,4 @@
-const CACHE = "gauntlet-v6";
+const CACHE = "gauntlet-v7";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./index.html", "./icon.png"])));
   self.skipWaiting();
