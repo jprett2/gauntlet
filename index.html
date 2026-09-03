@@ -119,6 +119,11 @@ body.sell-theme .card-name{color:var(--oxblood-deep)}
 .t-amt{font-family:'Marcellus',Georgia,serif;color:var(--rail-green-deep);font-size:17px}
 .sale-amt{color:var(--oxblood)}
 .val-chip{font-family:'Marcellus',Georgia,serif;font-size:13px;color:var(--brass);background:transparent;border:1px solid rgba(166,124,46,.45);padding:3px 7px;cursor:pointer;flex-shrink:0}
+.matchup.compact .card{min-height:88px;padding:10px 12px;gap:5px}
+.matchup.compact .box-frame{width:60px;height:60px;outline-width:2px}
+.matchup.compact .card-name{font-size:clamp(15px,4.4vw,19px)}
+.matchup.compact .card-eyebrow{font-size:10px}
+.matchup.compact .vs{margin:4px 0}
 .rank-meta{font-style:italic;font-size:13.5px;color:rgba(35,48,31,.6);padding:8px 14px 0;text-align:center}
 .colophon{text-align:center;font-style:italic;font-size:13.5px;color:rgba(35,48,31,.55);margin-top:30px}
 .link-btn{background:none;border:none;font:inherit;color:rgba(35,48,31,.55);text-decoration:underline;cursor:pointer}
@@ -227,12 +232,13 @@ async function copyText(t) {
 }
 
 // ---------- tournament engine ----------
-function drawPair(t) {
-  let round = t.round.slice(), next = t.nextRound.slice(), rn = t.roundNum;
+function drawGroup(t, k) {
+  k = Math.max(2, Math.min(4, k || 2));
+  let round = t.round.slice(), next = (t.nextRound || []).slice(), rn = t.roundNum;
   while (true) {
     if (round.length >= 2) {
-      const a = round.shift(), b = round.shift();
-      return { round, nextRound: next, pair: [a, b], roundNum: rn };
+      const g = round.splice(0, Math.min(k, round.length));
+      return { round, nextRound: next, pair: g, roundNum: rn };
     }
     if (round.length === 1) next.push(round.shift());
     if (next.length === 1 && round.length === 0) {
@@ -241,7 +247,8 @@ function drawPair(t) {
     round = shuffle(next); next = []; rn += 1;
   }
 }
-const startTournament = (names) => drawPair({ round: shuffle(names), nextRound: [], pair: null, roundNum: 1 });
+const drawPair = (t) => drawGroup(t, 2);
+const startTournament = (names, k) => drawGroup({ round: shuffle(names), nextRound: [], pair: null, roundNum: 1 }, k || 2);
 
 // ---------- actions ----------
 function beginTournament(m) {
@@ -277,14 +284,15 @@ function pick(name) {
     else { S.tourney = next; commit(); }
   }, 260);
 }
-function estBatch(n, x, y) {
+function estBatch(n, x, y, k) {
   if (n < 2) return 0;
+  k = Math.max(2, Math.min(4, k || 2));
   let e = 0;
-  const lg = (m) => Math.ceil(Math.log2(Math.max(m, 2)));
-  if (x > 0) e += (n - 1) + (x - 1) * lg(n);
+  const lg = (m) => Math.max(1, Math.ceil(Math.log(Math.max(m, 2)) / Math.log(k)));
+  if (x > 0) e += Math.ceil((n - 1) / (k - 1)) + (x - 1) * lg(n);
   if (y > 0) {
-    const z = x > 0 ? Math.ceil(n / 2) : n;
-    e += (z - 1) + (y - 1) * lg(z);
+    const z = x > 0 ? Math.max(2, Math.round(n * (k - 1) / k)) : n;
+    e += Math.ceil((z - 1) / (k - 1)) + (y - 1) * lg(z);
   }
   return e;
 }
@@ -299,10 +307,13 @@ function beginBatch() {
   y = Math.min(y, p.length - x);
   if (x + y < 1) { alert("Pick at least one keep or sell seat."); return; }
   if (p.length < 2) { alert("Not enough games left in the pool."); return; }
-  S.batchX = x; S.batchY = y;
-  S.batch = { stage: x > 0 ? "top" : "bottom", x, y, pool: p, topRanked: [], botRanked: [], lostTo: {}, wins: {}, picks: 0, bracket: null };
+  let g = parseInt(document.getElementById("batch-g").value, 10);
+  if (isNaN(g)) g = 2;
+  g = Math.max(2, Math.min(4, g));
+  S.batchX = x; S.batchY = y; S.batchG = g;
+  S.batch = { stage: x > 0 ? "top" : "bottom", x, y, g, pool: p, topRanked: [], botRanked: [], lostTo: {}, wins: {}, picks: 0, bracket: null };
   const B = S.batch;
-  B.bracket = drawPair({ round: shuffle(B.stage === "top" ? p : p.slice()), nextRound: [], roundNum: 1 });
+  B.bracket = drawGroup({ round: shuffle(p), nextRound: [], roundNum: 1 }, g);
   advanceBatch();
   commit();
 }
@@ -311,7 +322,7 @@ function startBottomStage() {
   B.stage = "bottom";
   if (B.y === 0) { finishBatch(); return; }
   const cands = B.pool.filter((g) => !B.topRanked.includes(g) && !(B.wins[g] && B.wins[g].length));
-  B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+  B.bracket = drawGroup({ round: shuffle(cands), nextRound: [], roundNum: 1 }, B.g);
 }
 function finishBatch() {
   const B = S.batch;
@@ -334,7 +345,7 @@ function advanceBatch() {
         continue;
       }
       const cands = B.pool.filter((g) => !B.topRanked.includes(g) && B.lostTo[g] === c);
-      B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+      B.bracket = drawGroup({ round: shuffle(cands), nextRound: [], roundNum: 1 }, B.g);
     } else {
       B.botRanked.push(c);
       if (B.botRanked.length >= B.y || B.topRanked.length + B.botRanked.length >= B.pool.length) { finishBatch(); return; }
@@ -343,7 +354,7 @@ function advanceBatch() {
         B.wins[g] && B.wins[g].length && B.wins[g].every((w) => B.botRanked.includes(w))
       );
       if (!cands.length) { finishBatch(); return; }
-      B.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+      B.bracket = drawGroup({ round: shuffle(cands), nextRound: [], roundNum: 1 }, B.g);
     }
   }
   if (S.batch) S.screen = "batch-play";
@@ -358,19 +369,30 @@ function pickBatch(kept) {
   setTimeout(() => {
     history.push(JSON.parse(JSON.stringify({ tourney: S.tourney, ranking: S.ranking, batch: S.batch, keepers: S.keepers, sells: S.sells, mode: S.mode, screen: S.screen })));
     if (history.length > 20) history.shift();
-    const other = B.bracket.pair[0] === kept ? B.bracket.pair[1] : B.bracket.pair[0];
-    B.lostTo[other] = kept;
-    (B.wins[kept] = B.wins[kept] || []).push(other);
+    const others = B.bracket.pair.filter((n) => n !== kept);
+    let advancing;
+    if (B.stage === "top") {
+      for (const o of others) { B.lostTo[o] = kept; }
+      (B.wins[kept] = B.wins[kept] || []).push.apply(B.wins[kept], others);
+      advancing = kept;
+    } else {
+      for (const o of others) { (B.wins[o] = B.wins[o] || []).push(kept); }
+      B.lostTo[kept] = others[0];
+      advancing = kept;
+    }
     B.picks++;
-    const advancing = B.stage === "top" ? kept : other;
-    B.bracket = drawPair({ round: B.bracket.round, nextRound: B.bracket.nextRound.concat([advancing]), roundNum: B.bracket.roundNum });
+    B.bracket = drawGroup({ round: B.bracket.round, nextRound: B.bracket.nextRound.concat([advancing]), roundNum: B.bracket.roundNum }, B.g);
     picked = null;
     advanceBatch();
     commit();
   }, 260);
 }
 const rankPool = () => ALL.filter((g) => !S.rankExcluded.includes(g));
-const estimatePicks = (n, x) => n < 2 ? 0 : (n - 1) + (Math.min(x, n) - 1) * Math.ceil(Math.log2(n));
+const estimatePicks = (n, x, k) => {
+  if (n < 2) return 0;
+  k = Math.max(2, Math.min(4, k || 2));
+  return Math.ceil((n - 1) / (k - 1)) + (Math.min(x, n) - 1) * Math.max(1, Math.ceil(Math.log(n) / Math.log(k)));
+};
 
 function beginRanking() {
   const title = document.getElementById("rank-title").value.trim();
@@ -380,7 +402,11 @@ function beginRanking() {
   if (isNaN(x) || x < 1) x = 10;
   x = Math.min(x, p.length);
   if (S.ranking && !confirm("A paused ranking is waiting. Abandon it and start a new one?")) return;
-  S.ranking = { title: title || "Top " + x, x, pool: p, ranked: [], lostTo: {}, picks: 0, bracket: startTournament(p) };
+  let g = parseInt(document.getElementById("rank-g").value, 10);
+  if (isNaN(g)) g = 2;
+  g = Math.max(2, Math.min(4, g));
+  S.rankG = g;
+  S.ranking = { title: title || "Top " + x, x, g, pool: p, ranked: [], lostTo: {}, picks: 0, bracket: startTournament(p, g) };
   advanceRankSeats();
   S.screen = S.ranking ? "rank-play" : S.screen;
   commit();
@@ -397,7 +423,7 @@ function advanceRankSeats() {
       return;
     }
     const cands = R.pool.filter((g) => !R.ranked.includes(g) && R.lostTo[g] === c);
-    R.bracket = drawPair({ round: shuffle(cands), nextRound: [], roundNum: 1 });
+    R.bracket = drawGroup({ round: shuffle(cands), nextRound: [], roundNum: 1 }, R.g);
   }
 }
 function pickRank(winner) {
@@ -410,10 +436,10 @@ function pickRank(winner) {
   setTimeout(() => {
     history.push(JSON.parse(JSON.stringify({ tourney: S.tourney, ranking: S.ranking, keepers: S.keepers, sells: S.sells, mode: S.mode, screen: S.screen })));
     if (history.length > 20) history.shift();
-    const loser = R.bracket.pair[0] === winner ? R.bracket.pair[1] : R.bracket.pair[0];
-    R.lostTo[loser] = winner;
+    const losers = R.bracket.pair.filter((n) => n !== winner);
+    for (const l of losers) R.lostTo[l] = winner;
     R.picks++;
-    R.bracket = drawPair({ round: R.bracket.round, nextRound: R.bracket.nextRound.concat([winner]), roundNum: R.bracket.roundNum });
+    R.bracket = drawGroup({ round: R.bracket.round, nextRound: R.bracket.nextRound.concat([winner]), roundNum: R.bracket.roundNum }, R.g);
     picked = null;
     advanceRankSeats();
     commit();
@@ -632,7 +658,7 @@ function colophon() {
 // ---------- screens ----------
 function render() {
   const app = document.getElementById("app");
-  document.body.classList.toggle("sell-theme", S.screen === "play" && S.mode === "sell");
+  document.body.classList.toggle("sell-theme", (S.screen === "play" && S.mode === "sell") || (S.screen === "batch-play" && S.batch && S.batch.stage === "bottom"));
   const head = '<header class="masthead"><div class="rule"></div><h1>The Collection Gauntlet</h1><div class="sub">one shelf \u00b7 no mercy</div><div class="rule"></div></header>';
   let body = "";
 
@@ -659,7 +685,8 @@ function render() {
     body = '<div class="panel"><p class="lede">One run, both ends of the shelf: a keep bracket crowns your top X, then the games that never won a pick fight it out for the sale ledger. Every tap is the game you\u0027d keep. ' + p.length + " games in the pool.</p>" +
       '<div class="price-form" style="justify-content:flex-start">' +
       '<div class="pf-field"><label>Keep how many?</label><input id="batch-x" type="number" inputmode="numeric" min="0" max="' + p.length + '" value="' + (S.batchX != null ? S.batchX : 5) + '"></div>' +
-      '<div class="pf-field"><label>Sell how many?</label><input id="batch-y" type="number" inputmode="numeric" min="0" max="' + p.length + '" value="' + (S.batchY != null ? S.batchY : 5) + '"></div></div>' +
+      '<div class="pf-field"><label>Sell how many?</label><input id="batch-y" type="number" inputmode="numeric" min="0" max="' + p.length + '" value="' + (S.batchY != null ? S.batchY : 5) + '"></div>' +
+      '<div class="pf-field"><label>Games per screen</label><input id="batch-g" type="number" inputmode="numeric" min="2" max="4" value="' + (S.batchG != null ? S.batchG : 2) + '"></div></div>' +
       '<div class="trim-count" id="batch-est"></div>' +
       '<button class="btn primary" data-act="begin-batch">Start the gauntlet</button>' +
       '<div class="toolbar"><button class="btn ghost" data-act="home">Back</button></div></div>';
@@ -667,16 +694,16 @@ function render() {
 
   else if (S.screen === "batch-play" && S.batch && S.batch.bracket && S.batch.bracket.pair) {
     const B = S.batch, b = B.bracket, bottom = B.stage === "bottom";
-    const left = b.round.length + b.nextRound.length + 2;
+    const left = b.round.length + b.nextRound.length + b.pair.length;
     const seat = bottom ? B.botRanked.length + 1 : B.topRanked.length + 1;
     const of = bottom ? B.y : B.x;
     body = '<div class="scoreline"><span class="' + (bottom ? "sell-tag" : "keep-tag") + '">' + (bottom ? "Sale seats" : "Keep seats") +
       '</span><span class="dot">\u00b7</span><span>Seat ' + seat + " of " + of +
       '</span><span class="dot">\u00b7</span><span>' + left + " remain</span></div>" +
-      '<p class="prompt">Tap the one you\u0027d keep.</p><div class="matchup">';
+      '<p class="prompt">' + (bottom ? "Tap the one you\u0027d sooner sell." : "Tap the one you\u0027d keep.") + '</p><div class="matchup' + (b.pair.length > 2 ? " compact" : "") + '">';
     b.pair.forEach((name, i) => {
-      if (i === 1) body += '<div class="vs"><span>versus</span></div>';
-      body += '<button class="card" data-act="pick-batch" data-name="' + esc(name) + '"><span class="card-eyebrow">Keep</span>' + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
+      if (i > 0) body += '<div class="vs"><span>versus</span></div>';
+      body += '<button class="card" data-act="pick-batch" data-name="' + esc(name) + '"><span class="card-eyebrow">' + (bottom ? "Sell" : "Keep") + "</span>" + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
     });
     body += '</div><div class="toolbar"><button class="btn ghost" data-act="undo"' + (history.length ? "" : " disabled") + '>Undo last pick</button>' +
       '<button class="btn ghost" data-act="home">Pause</button></div>';
@@ -718,7 +745,8 @@ function render() {
       (S.rankExcluded.length ? " (" + S.rankExcluded.length + " excluded)" : "") + ".</p>" +
       '<div class="price-form" style="justify-content:flex-start">' +
       '<div class="pf-field" style="flex:1;min-width:150px"><label>Title</label><input id="rank-title" type="text" placeholder="e.g. DoamCon 10" style="width:100%"></div>' +
-      '<div class="pf-field"><label>Top how many?</label><input id="rank-x" type="number" inputmode="numeric" min="1" max="' + p.length + '" value="10"></div></div>' +
+      '<div class="pf-field"><label>Top how many?</label><input id="rank-x" type="number" inputmode="numeric" min="1" max="' + p.length + '" value="10"></div>' +
+      '<div class="pf-field"><label>Games per screen</label><input id="rank-g" type="number" inputmode="numeric" min="2" max="4" value="' + (S.rankG != null ? S.rankG : 2) + '"></div></div>' +
       '<div class="trim-count" id="rank-est"></div>' +
       '<button class="btn primary" data-act="rank-start">Start the ranking</button>' +
       '<div class="vault-divider"></div>' +
@@ -729,12 +757,12 @@ function render() {
 
   else if (S.screen === "rank-play" && S.ranking && S.ranking.bracket && S.ranking.bracket.pair) {
     const R = S.ranking, b = R.bracket;
-    const left = b.round.length + b.nextRound.length + 2;
+    const left = b.round.length + b.nextRound.length + b.pair.length;
     body = '<div class="scoreline"><span class="keep-tag">' + esc(R.title) + '</span><span class="dot">\u00b7</span><span>Seat ' + (R.ranked.length + 1) + " of " + R.x +
       '</span><span class="dot">\u00b7</span><span>' + left + " remain</span></div>" +
-      '<p class="prompt">Tap the one you prefer.</p><div class="matchup">';
+      '<p class="prompt">Tap the one you prefer.</p><div class="matchup' + (b.pair.length > 2 ? " compact" : "") + '">';
     b.pair.forEach((name, i) => {
-      if (i === 1) body += '<div class="vs"><span>versus</span></div>';
+      if (i > 0) body += '<div class="vs"><span>versus</span></div>';
       body += '<button class="card" data-act="pick-rank" data-name="' + esc(name) + '"><span class="card-eyebrow">Prefer</span>' + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
     });
     body += '</div><div class="toolbar"><button class="btn ghost" data-act="undo"' + (history.length ? "" : " disabled") + '>Undo last pick</button>' +
@@ -848,25 +876,28 @@ function render() {
   app.innerHTML = head + body + colophon();
 
   if (S.screen === "batch-setup") {
-    const xi = document.getElementById("batch-x"), yi = document.getElementById("batch-y"), est = document.getElementById("batch-est");
+    const xi = document.getElementById("batch-x"), yi = document.getElementById("batch-y"), gi = document.getElementById("batch-g"), est = document.getElementById("batch-est");
     const upd = () => {
       const n = pool().length;
-      let x = parseInt(xi.value, 10), y = parseInt(yi.value, 10);
-      if (isNaN(x) || x < 0) x = 0; if (isNaN(y) || y < 0) y = 0;
+      let x = parseInt(xi.value, 10), y = parseInt(yi.value, 10), g = parseInt(gi.value, 10);
+      if (isNaN(x) || x < 0) x = 0; if (isNaN(y) || y < 0) y = 0; if (isNaN(g)) g = 2;
+      g = Math.max(2, Math.min(4, g));
       x = Math.min(x, n); y = Math.min(y, Math.max(0, n - x));
-      est.textContent = "\u2248 " + estBatch(n, x, y) + " picks for top " + x + " + bottom " + y;
+      est.textContent = "\u2248 " + estBatch(n, x, y, g) + " picks for top " + x + " + bottom " + y + " at " + g + " per screen";
     };
-    xi.addEventListener("input", upd); yi.addEventListener("input", upd); upd();
+    xi.addEventListener("input", upd); yi.addEventListener("input", upd); gi.addEventListener("input", upd); upd();
   }
   if (S.screen === "rank-setup") {
     const xi = document.getElementById("rank-x");
+    const gi = document.getElementById("rank-g");
     const est = document.getElementById("rank-est");
     const upd = () => {
       const n = rankPool().length;
       let x = parseInt(xi.value, 10); if (isNaN(x) || x < 1) x = 10; x = Math.min(x, n);
-      est.textContent = "\u2248 " + estimatePicks(n, x) + " picks for a top " + x;
+      let g = parseInt(gi.value, 10); if (isNaN(g)) g = 2; g = Math.max(2, Math.min(4, g));
+      est.textContent = "\u2248 " + estimatePicks(n, x, g) + " picks for a top " + x + " at " + g + " per screen";
     };
-    xi.addEventListener("input", upd); upd();
+    xi.addEventListener("input", upd); gi.addEventListener("input", upd); upd();
   }
   if (S.screen === "library") {
     renderLibList();
