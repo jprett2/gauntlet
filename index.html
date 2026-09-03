@@ -124,6 +124,13 @@ body.sell-theme .card-name{color:var(--oxblood-deep)}
 .matchup.compact .card-name{font-size:clamp(15px,4.4vw,19px)}
 .matchup.compact .card-eyebrow{font-size:10px}
 .matchup.compact .vs{margin:4px 0}
+.matchup.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.matchup.grid .card{min-height:0;padding:14px 10px;gap:8px}
+.matchup.grid .box-frame{width:clamp(96px,28vw,128px);height:clamp(96px,28vw,128px)}
+.matchup.grid .box-img{image-rendering:auto}
+.matchup.grid .card-name{font-size:clamp(14px,4.2vw,18px);line-height:1.15}
+.matchup.grid .card-eyebrow{font-size:10px;letter-spacing:.18em}
+.matchup.grid .card:nth-child(3):last-child{grid-column:1/-1;justify-self:center;width:calc(50% - 5px)}
 .rank-meta{font-style:italic;font-size:13.5px;color:rgba(35,48,31,.6);padding:8px 14px 0;text-align:center}
 .colophon{text-align:center;font-style:italic;font-size:13.5px;color:rgba(35,48,31,.55);margin-top:30px}
 .link-btn{background:none;border:none;font:inherit;color:rgba(35,48,31,.55);text-decoration:underline;cursor:pointer}
@@ -700,9 +707,9 @@ function render() {
     body = '<div class="scoreline"><span class="' + (bottom ? "sell-tag" : "keep-tag") + '">' + (bottom ? "Sale seats" : "Keep seats") +
       '</span><span class="dot">\u00b7</span><span>Seat ' + seat + " of " + of +
       '</span><span class="dot">\u00b7</span><span>' + left + " remain</span></div>" +
-      '<p class="prompt">' + (bottom ? "Tap the one you\u0027d sooner sell." : "Tap the one you\u0027d keep.") + '</p><div class="matchup' + (b.pair.length > 2 ? " compact" : "") + '">';
+      '<p class="prompt">' + (bottom ? "Tap the one you\u0027d sooner sell." : "Tap the one you\u0027d keep.") + '</p><div class="matchup' + (b.pair.length > 2 ? " grid" : "") + '">';
     b.pair.forEach((name, i) => {
-      if (i > 0) body += '<div class="vs"><span>versus</span></div>';
+      if (i > 0 && b.pair.length === 2) body += '<div class="vs"><span>versus</span></div>';
       body += '<button class="card" data-act="pick-batch" data-name="' + esc(name) + '"><span class="card-eyebrow">' + (bottom ? "Sell" : "Keep") + "</span>" + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
     });
     body += '</div><div class="toolbar"><button class="btn ghost" data-act="undo"' + (history.length ? "" : " disabled") + '>Undo last pick</button>' +
@@ -760,9 +767,9 @@ function render() {
     const left = b.round.length + b.nextRound.length + b.pair.length;
     body = '<div class="scoreline"><span class="keep-tag">' + esc(R.title) + '</span><span class="dot">\u00b7</span><span>Seat ' + (R.ranked.length + 1) + " of " + R.x +
       '</span><span class="dot">\u00b7</span><span>' + left + " remain</span></div>" +
-      '<p class="prompt">Tap the one you prefer.</p><div class="matchup' + (b.pair.length > 2 ? " compact" : "") + '">';
+      '<p class="prompt">Tap the one you prefer.</p><div class="matchup' + (b.pair.length > 2 ? " grid" : "") + '">';
     b.pair.forEach((name, i) => {
-      if (i > 0) body += '<div class="vs"><span>versus</span></div>';
+      if (i > 0 && b.pair.length === 2) body += '<div class="vs"><span>versus</span></div>';
       body += '<button class="card" data-act="pick-rank" data-name="' + esc(name) + '"><span class="card-eyebrow">Prefer</span>' + boxCover(name) + '<span class="card-name">' + esc(name) + "</span></button>";
     });
     body += '</div><div class="toolbar"><button class="btn ghost" data-act="undo"' + (history.length ? "" : " disabled") + '>Undo last pick</button>' +
